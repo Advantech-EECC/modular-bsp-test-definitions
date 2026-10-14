@@ -297,13 +297,21 @@ drop_caches() {
 # ─── RAM helpers ─────────────────────────────────────────────────────────────
 
 physical_ram_mmap_MB() {
-    local lo hi
-    lo=$(grep '^[^ ]' /proc/iomem 2>/dev/null | grep -v dma |
-         grep 'System RAM' | head -1 | awk -F- '{print $1}' | xargs)
-    hi=$(grep '^[^ ]' /proc/iomem 2>/dev/null | grep -v dma |
-         grep 'System RAM' | tail -1 | awk -F- '{print $2}' | awk '{print $1}')
-    if [ -n "$lo" ] && [ -n "$hi" ]; then
-        printf '%d\n' $(( (0x$hi - 0x$lo + 1) / (1024 * 1024) ))
+    # Sum the sizes of all 'System RAM' regions listed in /proc/iomem.
+    # Some platforms expose multiple, non-contiguous ranges; taking the
+    # first start and last end incorrectly includes gaps (MMIO, reserved
+    # areas) and overestimates physical RAM. Add each region's length.
+    local total=0 line lo hi
+    while IFS= read -r line; do
+        lo=$(awk -F- '{print $1}' <<<"$line" | xargs)
+        hi=$(awk -F- '{print $2}' <<<"$line" | awk '{print $1}' | xargs)
+        if [ -n "$lo" ] && [ -n "$hi" ]; then
+            total=$(( total + (0x${hi} - 0x${lo} + 1) ))
+        fi
+    done < <(grep '^[^ ]' /proc/iomem 2>/dev/null | grep -v dma | grep 'System RAM')
+
+    if [ "$total" -gt 0 ]; then
+        printf '%d\n' $(( total / (1024 * 1024) ))
     else
         echo 0
     fi
